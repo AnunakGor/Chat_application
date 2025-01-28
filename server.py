@@ -22,19 +22,23 @@ def remove_client(username):
             clients[username].close()
             del clients[username]
             broadcast(f"[SERVER] {username} has left the chat.".encode('utf-8'))
+            print(f"{username} has been removed from the server.")
 
 def handle_client(client_socket, client_address):
+    username = None
     try:
         username = client_socket.recv(1024).decode('utf-8')
         if username in clients:
             client_socket.send("ERROR: Username already taken.".encode('utf-8'))
             client_socket.close()
+            return
 
         with lock:
             if len(clients) >= MAX_CLIENTS:
                 client_socket.send("ERROR: Server is full.".encode('utf-8'))
                 print(f"Server Full. Rejected client: {username}")
                 client_socket.close()
+                return
 
             clients[username] = client_socket
 
@@ -55,11 +59,43 @@ def handle_client(client_socket, client_address):
             chat_history.append((timestamp, username, message))
 
             broadcast(f"[{timestamp}] {username}: {message}", sender_username=username)
+            if message.lower() == "/list":
+                with lock:
+                    client_list = ", ".join(clients.keys())
+                    client_socket.send(f"[SERVER] Connected clients: {client_list}".encode('utf-8'))
+                continue
 
+            if message.startswith("/pm"):
+                parts = message.split(" ", 2)
+                if len(parts) == 3:
+                    target_username, private_message = parts[1], parts[2]
+                    if target_username in clients:
+                        clients[target_username].send(f"[PM from {username}] {private_message}".encode('utf-8'))
+                    else:
+                        client_socket.send(f"[SERVER] User {target_username} not found.".encode('utf-8'))
+                else:
+                    client_socket.send("[SERVER] Invalid private message format. Use /pm <username> <message>.".encode('utf-8'))
+                continue
+
+            if message.lower() == "/admin list":
+                with lock:
+                    client_list = ", ".join(clients.keys())
+                    print(f"[ADMIN] Connected clients: {client_list}")
+
+            elif message.lower() == "/admin history":
+                print("[ADMIN] Chat history:")
+                for entry in chat_history:
+                    print(f"{entry[0]} | {entry[1]}: {entry[2]}")
+
+    except ConnectionResetError:
+        print(f"Client {username} exited.")
+        broadcast(f"Client {username} exited.")
     except Exception as e:
         print(f"Error: {e}")
     finally:
-        remove_client(username)
+        if username:
+            remove_client(username)                        
+  
 
 def start_server():
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
